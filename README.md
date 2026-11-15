@@ -75,32 +75,70 @@ needs. Leave the rest of this file as it is.
 
 ## Design Notes
 
+<!--
 Complete this section before the Week 1 progress report. The syllabus asks
 for problem analysis, a solution architecture, and an estimated timeline.
 Keep each part short. Update it when the plan changes.
+-->
 
 ### Problem analysis
 
+<!--
 The five flags and what each one does. What the oracle is, and what
 agreement with it means for a line that matches inside a longer word.
+-->
+
+`rengrep` searches a text file for a literal pattern. We use
+`LC_ALL=C grep -F` as the oracle and compare its output with ours byte for
+byte. By default, `cat` matches `concatenate` because it occurs as a
+substring. With `-w`, that occurrence fails the word-boundary check.
+
+| Flag | Behavior |
+| --- | --- |
+| `-n` | Prefix each selected line with its 1-based line number and a colon. |
+| `-c` | Print only the count of selected lines. Takes priority over `-n`. |
+| `-v` | Select lines that do not match. With `-c`, count those lines. |
+| `-i` | Ignore ASCII case during matching and keep the original text for output. |
+| `-w` | Require a line edge or a non-word byte on each side of a match. Letters, digits, and `_` are word bytes. |
 
 ### Solution architecture
 
+<!--
 How the four routines split the work. How the line index is built from
 one buffer, how the flag table dispatches, and which registers each
 routine uses.
+-->
+
+The C driver calls `parse_args`, reads the file into one buffer, and calls
+`index_lines` to record where each line starts and how long it is. It then
+uses `line_matches` to check each line and `int_to_dec` to format any
+line numbers or counts.
+
+| Routine | Plan | Planned register use |
+| --- | --- | --- |
+| `parse_args` (`args.asm`) | Walk `argv` to find the pattern and file path. For grouped flags like `-nvi`, scan `ncviw` with `repne scasb`. Set each flag bit from its position in the table. | `AL` holds the flag byte, `EDI` points into the table, and `ECX` counts the remaining bytes. |
+| `index_lines` (`lines.asm`) | Scan the buffer for newline bytes. Record each start offset and length without the newline. Include a final line without a newline, return zero entries for an empty file, and stop at the output capacity. | `ESI` walks the input buffer and `EDI` points to the next output entry. |
+| `line_matches` (`match.asm`) | Handle empty and oversized patterns first. Check candidate offsets from `0` through `linelen - patlen`. Use `repe cmpsb` for exact comparisons and fold ASCII bytes in registers for `-i`. Keep searching if a candidate fails the `-w` check. | `ESI` and `EDI` point to the bytes being compared, and `ECX` counts the bytes for `cmpsb`. |
+| `int_to_dec` (`fmt.asm`) | Divide by 10 and push each digit onto the stack. Pop the digits into the output buffer in display order. Write one digit for zero and return the digit count. | `EAX` holds the quotient, `EDX` holds the remainder, and `EDI` points to the output. |
+
+All four routines follow 32-bit `cdecl`. Each returns its result in `EAX`
+and preserves `EBX`, `ESI`, `EDI`, and `EBP`. The caller cleans up the
+arguments. Set `cld` before `scasb` or `cmpsb` so the pointers move forward.
 
 ### Timeline
 
+<!--
 One line per week. Name the subsystem each week finishes and the member
 who owns it.
+-->
 
 | Week | Goal | Owner |
-|---|---|---|
-| 1 | | |
-| 2 | | |
-| 3 | | |
-| 4 | Defense | |
+| --- | --- | --- |
+| 1 | Repo setup, design notes, subsystem ownership, and a prototype with basic argument parsing and line indexing | All members |
+| 2 | Complete Buffering and Lines, basic Matching, and Formatting and Flags for `-n` and `-c` | All members |
+| 3 | Finish the remaining flags, pass `make check`, and document quirks | All members |
+| 4 | Defense | All members |
+
 
 ## Subsystem Ownership
 
@@ -110,9 +148,9 @@ share one. The commit history must agree with this table.
 
 | Subsystem | Owner |
 |---|---|
-| Buffering and lines (`lines.asm`) | |
-| Matching (`match.asm`) | |
-| Formatting and flags (`fmt.asm`, `args.asm`, the tests you add) | |
+| Buffering and lines (`lines.asm`) | Ma. Christie Jude L. Tarre |
+| Matching (`match.asm`) | Aleighia Keith L. Reyes |
+| Formatting and flags (`fmt.asm`, `args.asm`, the tests you add) | Trisha Mae A. Hechenagocia, Gabrielle M. Sumergido |
 
 ## Quirks and Issues
 
