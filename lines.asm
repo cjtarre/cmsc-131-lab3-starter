@@ -47,7 +47,9 @@ segment .text
 
 _index_lines:
         enter   0,0
-        pusha
+        push    ebx
+        push    esi
+        push    edi
 
         ;
         ; TODO: build the index.
@@ -66,7 +68,46 @@ _index_lines:
         ; writing at max.
         ;
 
-        popa
-        mov     eax, 0
+        mov     esi, [ebp+8]        ; input buffer
+        mov     edi, [ebp+16]       ; next output entry
+        xor     eax, eax           ; entries written
+        xor     ebx, ebx           ; current line's start offset
+        xor     ecx, ecx           ; current byte offset
+
+.scan:
+        cmp     eax, [ebp+20]
+        jge     .done              ; output array is full
+
+        cmp     ecx, [ebp+12]
+        jge     .end_of_buffer
+
+        cmp     byte [esi+ecx], 0x0A
+        jne     .advance
+
+        mov     [edi], ebx         ; entry.offset = line start
+        mov     edx, ecx
+        sub     edx, ebx
+        mov     [edi+4], edx        ; entry.length = newline offset - line start
+        add     edi, 8             ; move past the two 4-byte fields
+        inc     eax
+        lea     ebx, [ecx+1]       ; next line starts after the newline
+
+.advance:
+        inc     ecx
+        jmp     .scan
+
+.end_of_buffer:
+        mov     edx, ecx
+        sub     edx, ebx           ; length of the final line
+        jle     .done              ; no bytes left to index
+
+        mov     [edi], ebx         ; final line's start offset
+        mov     [edi+4], edx       ; final line's length
+        inc     eax                ; count the final entry
+        
+.done:
+        pop     edi
+        pop     esi
+        pop     ebx
         leave
         ret
