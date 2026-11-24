@@ -60,18 +60,41 @@ segment .text
         global  _int_to_dec
 
 _int_to_dec:
-        enter   0,0
-        pusha
+        enter	0,0
+		; push callee-saved registers
+		push	ebx
+		push	edi
 
-        ;
-        ; TODO: convert.
-        ;
-        ; The loop above is the manual's. Your job is to make it write
-        ; into out (which is [ebp+12]) and return the digit count in eax.
-        ; The pop loop writes one byte per digit to out[0..count-1].
-        ;
+	;;; from manual
+		; load values
+		mov	eax, [ebp+8]			; int n
+		mov	edi, [ebp+12]			; char *out
 
-        popa
-        mov     eax, 0
+    	mov	ebx, 10
+       	xor	ecx, ecx				; digit count
+
+	.digit_loop:
+       	mov	edx, 0					; clear before div, as always
+       	div	ebx						; eax = quotient, edx = remainder
+       	add	dl, '0'					; remainder to ASCII
+       	push edx					; stack reverses them for us
+       	inc ecx
+       	cmp eax, 0
+       	jne .digit_loop
+
+	;;;
+
+		; now pop ecx digits into edi in the right order
+		mov	eax, ecx				; iteration = num of digits
+	.extract_loop:
+		pop	edx
+		mov	[edi], dl				; only copy dl 1-byte
+		inc	edi						; advance address
+		loop	.extract_loop		; auto decrement from ecx
+		
+		; restore callee-saved registers
+		pop	edi
+		pop	ebx
+		
         leave
         ret
