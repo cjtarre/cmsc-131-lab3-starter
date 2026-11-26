@@ -63,27 +63,132 @@
 segment .text
         global  _line_matches
 
+; _line_matches: returns 1 in eax if pat occurs in line, else 0.
+; Sets up the frame and works out the last start position to try.
 _line_matches:
-        enter   0,0
-        pusha
+        enter   0,0                 ; build stack frame, args now at [ebp+8..28]
+        pusha                       ; save all regs; popa restores ebx/esi/edi for us
+        cld                         ; make string ops go forward
 
-        ;
-        ; TODO: search.
-        ;
-        ; The loop the manual describes:
-        ;
-        ;   for start = 0 to linelen - patlen:
-        ;       compare patlen bytes at line+start against pat
-        ;       if equal: check word boundaries if whole
-        ;                 return 1 if they pass
-        ;   return 0
-        ;
-        ; The fast path (fold == 0) uses repe cmpsb. The folding path
-        ; compares a byte at a time, folding both sides in a register.
-        ; Both need cld first.
-        ;
+        mov     edx, [ebp+12]       ; edx = linelen
+        sub     edx, [ebp+20]       ; edx = linelen - patlen (the last valid start)
+        js      .nomatch            ; negative (SIGNED) -> pattern too long, skip loop
+        xor     ebx, ebx            ; ebx = start = 0
 
-        popa
-        mov     eax, 0
+; .start_loop: runs once per start position; resets pointers and picks the fast or folding path.
+.start_loop:
+        cmp     ebx, edx            ; start vs. bound
+        jg      .nomatch            ; SIGNED: start > bound -> out of positions
+
+        mov     esi, [ebp+8]        ; reset esi = line  
+        add     esi, ebx            ; esi = line + start (window begins here)
+        mov     edi, [ebp+16]       ; reset edi = pat
+        mov     ecx, [ebp+20]       ; reset ecx = patlen
+        cmp     dword [ebp+24], 0   ; fold flag?
+        jne     .fold_cmp           ; nonzero -> use the folding loop
+
+        test    ecx, ecx            ; empty pattern? forces ZF=1 if ecx==0
+        repe    cmpsb               ; compare until mismatch or ecx==0; ZF=1 if all equal
+        jmp     .compared           ; both paths meet here with ZF set
+
+; .fold_cmp: case-insensitive comparison, folding both bytes in registers. Leaves ZF=1 if equal.
+.fold_cmp:
+        test    ecx, ecx            ; guard: empty pattern -> ZF=1 ...
+        jz      .compared           ; ... and skip the bottom-tested loop
+
+; .fold_loop: compares one pair of bytes per pass.
+.fold_loop:
+        mov     al, [esi]           ; al = line byte (copy in register)
+        mov     ah, [edi]           ; ah = pattern byte
+        inc     esi                 ; advance both pointers
+        inc     edi
+        cmp     al, 'A'             ; below 'A'? not uppercase
+        jb      .a_done
+        cmp     al, 'Z'             ; above 'Z'? not uppercase
+        ja      .a_done
+        add     al, 32              ; uppercase -> lowercase
+
+; .a_done: line byte is folded; now fold the pattern byte.
+.a_done:
+        cmp     ah, 'A'             ; same lowercasing for the pattern byte
+        jb      .b_done
+        cmp     ah, 'Z'
+        ja      .b_done
+        add     ah, 32
+
+; .b_done: both bytes are folded; compare them.
+.b_done:
+        cmp     al, ah              ; compare folded bytes
+        jne     .compared           ; mismatch: ZF=0, leave the loop
+        dec     ecx                 ; one fewer byte to go
+        jnz     .fold_loop          ; more bytes -> repeat; when 0, ZF=1 falls through
+
+; .compared: both paths meet here. ZF=0 means try the next start;
+; ZF=1 means a match, after the word-boundary check if -w is on.
+.compared:
+        jne     .next               ; ZF=0 -> window differs, try next start
+        cmp     dword [ebp+28], 0   ; whole-word mode?
+        je      .match              ; no -> plain match, done
+
+        mov     esi, [ebp+8]        ; esi = line (for boundary reads)
+        test    ebx, ebx            ; start == 0?
+        jz      .before_ok          ; yes -> nothing before, OK
+        movzx   eax, byte [esi+ebx-1] ; al = byte before the match
+        call    is_word
+        test    eax, eax
+        jnz     .next               ; word char before -> fail, keep scanning
+
+; .before_ok: left side passed; check the byte after the match.
+.before_ok:
+        mov     ecx, [ebp+20]       ; ecx = patlen
+        add     ecx, ebx            ; ecx = start + patlen (index just past match)
+        cmp     ecx, [ebp+12]       ; == linelen?
+        je      .match              ; yes -> nothing after, OK
+        movzx   eax, byte [esi+ecx] ; al = byte after the match
+        call    is_word
+        test    eax, eax
+        jnz     .next               ; word char after -> fail, keep scanning
+
+; .match: valid match found; restore registers and return 1.
+.match:
+        popa                        ; restore all registers
+        mov     eax, 1              ; return 1
         leave
+        ret
+
+; .next: this start failed; move to the next start and keep scanning.
+.next:
+        inc     ebx                 ; start++
+        jmp     .start_loop
+
+; .nomatch: out of start positions (or pattern too long); return 0.
+.nomatch:
+        popa
+        mov     eax, 0              ; return 0
+        leave
+        ret
+
+; is_word: al = byte in, eax = 1 if it is a word char (A-Z a-z 0-9 _), else 0.
+; '_' is checked first because 'or al, 20h' would push it outside a-z.
+is_word:
+        cmp     al, '_'
+        je      .yes
+        cmp     al, '0'
+        jb      .no                 ; below '0' -> not a word char
+        cmp     al, '9'
+        jbe     .yes                ; digit
+        or      al, 20h             ; fold letters to lowercase (other bytes land outside a-z)
+        cmp     al, 'a'
+        jb      .no
+        cmp     al, 'z'
+        ja      .no
+
+; .yes: word character, return 1.
+.yes:
+        mov     eax, 1
+        ret
+
+; .no: not a word character, return 0.
+.no:
+        xor     eax, eax
         ret
